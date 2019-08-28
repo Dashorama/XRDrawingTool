@@ -308,8 +308,8 @@ PlayerSettings:
   - m_BuildTarget: Standalone
     m_Enabled: 1
     m_Devices:
-    - OpenVR
     - MockHMD
+    - OpenVR
     - Oculus
   - m_BuildTarget: Lumin
     m_Enabled: 1

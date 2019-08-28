@@ -4,6 +4,9 @@ using UnityEngine;
 using Valve.VR;
 using Valve.VR.Extras;
 
+/// <summary>
+/// Input handler for Steam VR
+/// </summary>
 public class WMRInput : MonoBehaviour
 {
     public SteamVR_LaserPointer m_Laser;

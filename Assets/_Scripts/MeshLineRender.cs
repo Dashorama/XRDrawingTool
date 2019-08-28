@@ -3,45 +3,53 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
+/// <summary>
+/// A Line drawn by updating a mesh during run time.
+/// </summary>
 [RequireComponent(typeof(MeshFilter))]
 [RequireComponent(typeof(MeshRenderer))]
 public class MeshLineRender : MonoBehaviour
 {
+    #region Variables
+    // Minimum distance between Line Points.
     const float m_DistanceThreshold = 0.025f;
+    // Material to be rendered, set in the inspector
     public Material penMaterial;
+
     Mesh m_Mesh;
     MeshRenderer m_Renderer;
-    
+
     float m_LineSize;
     bool firstQuad = true;
     int currentLineID;
 
+    // Because one mesh can contain multiple Lines, we keep track of the line IDs handled by this Renderer.
     public List<int> m_ContainedLineIds = new List<int>();
+    #endregion
 
+    #region Monobehavior
+    // Set our references and create an instance of the material so we can swap colors without effecting other instances of the Mesh Line Renderer.
     void OnEnable()
     {
         m_Mesh = GetComponent<MeshFilter>().mesh;
         m_Renderer = GetComponent<MeshRenderer>();
         m_Renderer.material = new Material(penMaterial);
     }
+    #endregion
 
-    public void SetColor(Color color)
-    {
-        m_Renderer.material.color = color;
-    }
-
-    public Color GetColor()
-    {
-        return m_Renderer.material.color;
-    }
-
-    public void SetWidth(float width)
-    {
-        m_LineSize = width;
-    }
-
+    #region Get and Set Parameters
+    public void SetColor(Color color) { m_Renderer.material.color = color; }
+    public Color GetColor() { return m_Renderer.material.color; }
+    public void SetWidth(float width) { m_LineSize = width; }
     public float GetWidth() { return m_LineSize; }
+    #endregion
 
+    #region Drawing
+    /// <summary>
+    /// Erase mesh whose vertices are within 'radius' distance from the point at 'position'
+    /// </summary>
+    /// <param name="position"></param>
+    /// <param name="radius"></param>
     public void EraseMesh(Vector3 position, float radius)
     {
         radius *= 0.45f;
@@ -86,33 +94,41 @@ public class MeshLineRender : MonoBehaviour
         m_Mesh.normals = normals;
     }
 
+    /// <summary>
+    /// Draw a new Line.
+    /// </summary>
+    /// <returns>Line</returns>
     public Line NewLine()
     {
-        //Debug.Log("New line was called!");
-        var line = new Line();
+        // Create a new line and save it to the main Line Dictionary and load all the pertinent data to the Line class.
+        var line = new Line(DrawingManager.GetNextLineID());
+
+        //Debug.Log("[MeshLineRenderer] Current LineID is: " + line.LineID);
+        //Debug.Log("[MeshLineRenderer] Current m_NumberLines is: " + DrawingManager.GetCurrentLineID());
+
         currentLineID = line.LineID;
         m_ContainedLineIds.Add(currentLineID);
-        DrawingManager.m_AllLines.Add(line);
+        DrawingManager.m_AllLines[currentLineID] = line;
         line.m_Color = GetColor();
         line.m_Width = m_LineSize;
         firstQuad = true;
-        //Debug.Log("Added a line with ID: " + line.LineID);
-        //Debug.Log("Current line ID is: " + currentLineID);
-        var curLine = DrawingManager.m_AllLines.Find(x => x.LineID == currentLineID);
-        //Debug.Log("Line exists in DrawingManager?: " + (curLine != null));
         return line;
     }
 
+    /// <summary>
+    /// Add a point to an existing line and draw the quad around it.
+    /// </summary>
+    /// <param name="point"></param>
     public void AddPoint(Vector3 point)
     {
-        //Debug.Log("Attempting to Add a point. Current Line ID is: "+currentLineID);
-        var curLine = DrawingManager.m_AllLines.Find(x => x.LineID == currentLineID);
-        if (curLine == null)
+        // Check if we already have a current line to draw, if not create a new one.
+        Line curLine;
+        if (!DrawingManager.m_AllLines.ContainsKey(currentLineID))
             curLine = NewLine();
+        else
+            curLine = DrawingManager.m_AllLines[currentLineID];
 
-        //Debug.Log("Adding a point to line with id: " + curLine.LineID);
-        //Debug.Log("First Quad is: " + firstQuad);
-
+        // Draw the line
         if (curLine.Points.Count < 1)
         {
             AddLine(m_Mesh, MakeQuad(point, point, m_LineSize, firstQuad));
@@ -130,11 +146,15 @@ public class MeshLineRender : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Render a line that has been drawn by another client.
+    /// </summary>
+    /// <param name="line"></param>
     public void DrawLineFromNetwork(Line line)
     {
-        var lineExists = DrawingManager.m_AllLines.Find(x => x.LineID == line.LineID);
-        if (lineExists != null)
+        if (DrawingManager.m_AllLines.ContainsKey(line.LineID))
         {
+            var lineExists = DrawingManager.m_AllLines[line.LineID];
             for (int i = 0; i < line.Points.Count; i++)
             {
                 if (i >= lineExists.Points.Count)
@@ -151,7 +171,7 @@ public class MeshLineRender : MonoBehaviour
         }
         else
         {
-            DrawingManager.m_AllLines.Add(line);
+            DrawingManager.m_AllLines[line.LineID] = line;
             m_ContainedLineIds.Add(line.LineID);
             for (int i = 0; i < line.Points.Count; i++)
             {
@@ -163,9 +183,17 @@ public class MeshLineRender : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Make a quad around our position
+    /// </summary>
+    /// <param name="start">Start point</param>
+    /// <param name="end">End point</param>
+    /// <param name="width">Line Width</param>
+    /// <param name="all">Draw a full quad or half</param>
+    /// <returns></returns>
     private Vector3[] MakeQuad(Vector3 start, Vector3 end, float width, bool all)
     {
-        //Debug.Log("Making a quad at start: " + start + " and end: " + end);
+        //Debug.Log("[MeshLineRenderer] Making a quad at start: " + start + " and end: " + end);
         width *= 0.5f;
         Vector3[] quad;
         if (all)
@@ -192,9 +220,13 @@ public class MeshLineRender : MonoBehaviour
         return quad;
     }
 
+    /// <summary>
+    /// Draw a line mesh from our created quads.
+    /// </summary>
+    /// <param name="m"></param>
+    /// <param name="quad"></param>
     private void AddLine(Mesh m, Vector3[] quad)
     {
-        //Debug.Log("Adding a line to mesh, " + m.name);
         int v1 = m.vertices.Length;
         Vector3[] vs = m.vertices;
         vs = ResizeVertices(vs, 2 * quad.Length);
@@ -291,4 +323,5 @@ public class MeshLineRender : MonoBehaviour
             newVerts[i] = vertices[i];
         return newVerts;
     }
+    #endregion
 }

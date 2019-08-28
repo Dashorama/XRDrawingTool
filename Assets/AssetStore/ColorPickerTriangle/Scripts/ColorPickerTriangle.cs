@@ -38,42 +38,46 @@ public class ColorPickerTriangle : MonoBehaviour, IPointerClickHandler
         TMesh = Triangle.GetComponent<MeshFilter>().mesh;
         SetNewColor(TheColor);
     }
-	
-	// Update is called once per frame
-	//void Update () {
- //       //CheckTrianglePosition();
- //       //CheckCirclePosition();
 
- //       if (!MousePressed)
- //       {
- //           if (Input.GetMouseButtonDown(0))
- //           {
- //               if (HasIntersection())
- //               {
- //                   MousePressed = true;
- //                   CheckTrianglePosition();
- //                   CheckCirclePosition();
- //                   return;
- //               }
- //           }
- //       }
- //       else
- //       {
- //           if (Input.GetMouseButtonUp(0) || !Input.GetMouseButton(0) || !HasIntersection())
- //           {
- //               MousePressed = false;
- //               StopDrag();
- //               return;
- //           }
+    // Update is called once per frame
+    //void Update () {
+    //       //CheckTrianglePosition();
+    //       //CheckCirclePosition();
 
- //           if (!DragCircle)
- //                   CheckTrianglePosition();
- //           if (!DragTriangle)
- //                   CheckCirclePosition();
- //           return;
- //       }
- //   }
+    //       if (!MousePressed)
+    //       {
+    //           if (Input.GetMouseButtonDown(0))
+    //           {
+    //               if (HasIntersection())
+    //               {
+    //                   MousePressed = true;
+    //                   CheckTrianglePosition();
+    //                   CheckCirclePosition();
+    //                   return;
+    //               }
+    //           }
+    //       }
+    //       else
+    //       {
+    //           if (Input.GetMouseButtonUp(0) || !Input.GetMouseButton(0) || !HasIntersection())
+    //           {
+    //               MousePressed = false;
+    //               StopDrag();
+    //               return;
+    //           }
 
+    //           if (!DragCircle)
+    //                   CheckTrianglePosition();
+    //           if (!DragTriangle)
+    //                   CheckCirclePosition();
+    //           return;
+    //       }
+    //   }
+
+
+        
+    // Cobbled this together by grabbing data that could be sent from the SteamVR IPointer wrapper.
+    // Probably need to change this significantly for Magic Leap
     public void OnPointerClick(PointerEventData eventData)
     {
         MyPlane = new Plane(transform.TransformDirection(Vector3.forward), transform.position);

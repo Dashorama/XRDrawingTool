@@ -5,6 +5,9 @@ using Photon.Pun;
 using Photon.Realtime;
 using TMPro;
 
+/// <summary>
+/// Network Initializedr
+/// </summary>
 public class Launcher : MonoBehaviourPunCallbacks
 {
     #region Private Serializable Fields
@@ -18,8 +21,6 @@ public class Launcher : MonoBehaviourPunCallbacks
     [Tooltip("The maximum number of players per room. When a room is full, it can't be joined by new players, and so new room will be created")]
     [SerializeField]
     private byte m_MaxPlayersPerRoom = 4;
-    [SerializeField]
-    private GameObject DrawingManagerPrefab;
     /// <summary>
     /// Keep track of the current process. Since connection is asynchronous and is based on several callbacks from Photon,
     /// we need to keep track of this to properly adjust the behavior when we receive call back by Photon.

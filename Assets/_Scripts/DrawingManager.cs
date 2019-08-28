@@ -7,21 +7,33 @@ using Photon.Pun;
 using System.Collections.Generic;
 using TMPro;
 
+/// <summary>
+/// The top level manager for drawing of lines. This manager takes inputs from the local client controllers,
+/// or from the Network through PUN and passes them to the appropriate managers for each type of drawing tool.
+/// </summary>
 public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
 {
-    public static int PlayerID = 0;
-
-    static int m_NumberLines = 0;
-    public static int GetNextLineID() { return m_NumberLines++; }
-
-    public const float eraserRadius = 0.1f;
-
+    #region Enum
     public enum DrawTools
     {
         Line,
         Pen,
         Eraser
     }
+    #endregion
+
+    #region Variables
+    // Unique Player ID - Generated from the Launcher class
+    public static int PlayerID = 0;
+
+    // Keep a running tally of the number of lines drawn, increment each time a new one is created.
+    static int m_NumberLines = 0;
+    public static int GetNextLineID() { return m_NumberLines++; }
+    public static int GetCurrentLineID() { return m_NumberLines; }
+
+    // Magic number eraser with -- May want to make this variable at some point in the future.
+    public const float eraserRadius = 0.1f;
+
 
     [Header("UI Links")]
     public GameObject UI;
@@ -34,40 +46,49 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
     public TextMeshProUGUI debug;
     public TextMeshProUGUI debugMock;
 
-    public static List<Line> m_AllLines;
-    public List<Line> debugLines;
+    // Dictionary of all availble lines, key = LineID, value = Line
+    public static Dictionary<int, Line> m_AllLines;
 
     private DrawTools drawTool;
     DrawLineManager lineDraw;
     DrawPenManager penDraw;
     bool uiEnabled = true;
     float currentWidth = 0.06f;
-
-    #region PunCallbacks
-
     #endregion
 
+    #region Monobehavior
+
+    // Get all the references.
     private void Awake()
     {
         lineDraw = GetComponent<DrawLineManager>();
         penDraw = GetComponent<DrawPenManager>();
-        m_AllLines = new List<Line>();
-        //PhotonView pv = GetComponent<PhotonView>();
-        //pv.ObservedComponents.Add(this);
-        debugLines = m_AllLines;
+        m_AllLines = new Dictionary<int, Line>();
     }
 
+    #endregion
+
+    #region PUN Serialization
+    // Register our custom Line class with PUN 2
     public static void RegisterCustomTypes()
     {
         var result = PhotonPeer.RegisterType(typeof(Line), (byte)'L', SerializeLine, DeserializeLine);
-        Debug.Log("Registering Custom Line Class:" + ((result) ? "Success" : "Failure"));
+        //Debug.Log("Registering Custom Line Class:" + ((result) ? "Success" : "Failure"));
     }
 
-    #region PUN Serialization
+    // Byte[] size of Vector 3
     public static readonly byte[] memVector3 = new byte[3 * 4];
-    // 4 bytes for LineID, a 4 float vector for RGBA color, and a float for width
+
+    // Byte[] size of non vector Data in Line class 
+    // 4 bytes for LineID, a 4 float vector for RGBA color, a float for width, and a short at 0 or 1 for line or pen respectively
     public static readonly int memLine = 4 + (4 * 4) + 4 + 2;
 
+    /// <summary>
+    /// Serializer for the Line class for PUN 2 
+    /// </summary>
+    /// <param name="outStream"></param>
+    /// <param name="customobject"></param>
+    /// <returns></returns>
     private static short SerializeLine(StreamBuffer outStream, object customobject)
     {
         Line line = (Line)customobject;
@@ -101,6 +122,12 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
         return (short)(3 * 4 * line.Points.Count + memLine);
     }
 
+    /// <summary>
+    /// Deserializer for the Line class for PUN 2
+    /// </summary>
+    /// <param name="inStream"></param>
+    /// <param name="length"></param>
+    /// <returns></returns>
     private static object DeserializeLine(StreamBuffer inStream, short length)
     {
         Line line = new Line();
@@ -138,14 +165,61 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
         return line;
     }
 
+    /// <summary>
+    /// Keep the line number and the line Dictionary sync'd between all active users.
+    /// </summary>
+    /// <param name="stream"></param>
+    /// <param name="info"></param>
+    public void OnPhotonSerializeView(PhotonStream stream, PhotonMessageInfo info)
+    {
+        if (stream.IsWriting)
+        {
+            // If we are writing, send the current value for m_NumberLines and each Line in the m_AllLines Dictionary
+            stream.SendNext(m_NumberLines);
+            foreach (var line in m_AllLines)
+                stream.SendNext(line.Value);
+        }
+        else
+        {
+            // If we are reading, pull the current value for m_NumberLines, keep the greater value.
+            int receive = (int)stream.ReceiveNext();
+
+            if (receive > m_NumberLines)
+                m_NumberLines = receive;
+            // Loop through the total number of lines on the network
+            for (int i = 4; i < stream.Count; i++)
+            {
+                var line = (Line)stream.ReceiveNext();
+
+                //Debug.Log("[OnPhotonSerializeView] Reading data for line with ID: " + line.LineID);
+                //Debug.Log("[OnPhotonSerializeView] Dictionary Entry Found?: " + m_AllLines.ContainsKey(line.LineID));
+               
+                // If we find a line that doesn't exist locally, let's draw it.
+                if (!m_AllLines.ContainsKey(line.LineID))
+                    DrawNetworkLine(line);
+                else if (m_AllLines[line.LineID].Points.Count == line.Points.Count)
+                    continue;
+                else
+                {
+                    // If we find a line that exists but has fewer points than on the server, let's update the line.
+                    // If it has more points, we need to erase, if it has less we need to draw.
+                    if (m_AllLines[line.LineID].Points.Count < line.Points.Count)
+                        EditNetworkLine(line);
+                    else
+                        EraseNetworkLine(line);
+                }
+            }
+        }
+    }
     #endregion
 
+    #region Draw Handlers
     /// <summary>
     /// Passes the draw function to the correct manager depending on which tool is active.
     /// </summary>
-    /// <param name="position"></param>
-    /// <param name="buttonCurValue"></param>
-    /// <param name="buttonlastVal"></param>
+    /// <param name="position">Position of the controller in world space</param>
+    /// <param name="buttonCurValue">State of the trigger for the current frame</param>
+    /// <param name="buttonlastVal">State of the trigger for the previous frame</param>
     public void Draw(Vector3 position, bool buttonCurValue, bool buttonlastVal)
     {
         switch (drawTool)
@@ -162,6 +236,12 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
         }
     }
 
+    /// <summary>
+    /// Erase a line.
+    /// </summary>
+    /// <param name="position">Position of the controller in world space</param>
+    /// <param name="buttonCurValue">State of the trigger for the current frame</param>
+    /// <param name="buttonlastVal">State of the trigger for the previous frame</param>
     private void Erase(Vector3 position, bool buttonCurValue, bool buttonlastVal)
     {
         if (!buttonCurValue || uiEnabled)
@@ -173,6 +253,12 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
         penDraw.Erase(position, eraserRadius);
     }
 
+    /// <summary>
+    /// Draw function when the Line tool is active
+    /// </summary>
+    /// <param name="position">Position of the controller in world space</param>
+    /// <param name="buttonCurValue">State of the trigger for the current frame</param>
+    /// <param name="buttonlastVal">State of the trigger for the previous frame</param>
     private void HandleLineTool(Vector3 position, bool buttonCurValue, bool buttonlastVal)
     {
         // Don't allow drawing if the UI is open
@@ -183,9 +269,15 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
             lineDraw.HandleDrawButtonPress(position, true, colorPicker.TheColor, currentWidth);
     }
 
-    public void HandleTrackPadPress(Vector3 position, bool leftPress)
+    /// <summary>
+    /// UI Toggle Function if the 'toggleUI' is true.
+    /// End drawing of currently dragged line if the 'toggleUI' is false and user is currently using the Line tool. 
+    /// </summary>
+    /// <param name="position">Position of the controller in world space</param>
+    /// <param name="toggleUI">Toggle UI on/off if True, End Line drag if false & currently dragging a line</param>
+    public void HandleTrackPadPress(Vector3 position, bool toggleUI)
     {
-        if (leftPress)
+        if (toggleUI)
         {
             UI.SetActive(!UI.activeSelf);
             uiEnabled = UI.activeSelf;
@@ -203,14 +295,21 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
         }
     }
 
+    /// <summary>
+    /// Draw a free-form line.
+    /// </summary>
+    /// <param name="position">Position of the controller in world space</param>
+    /// <param name="buttonCurValue">State of the trigger for the current frame</param>
+    /// <param name="buttonlastVal">State of the trigger for the previous frame</param>
     void HandlePenTool(Vector3 position, bool buttonCurValue, bool buttonlastVal)
     {
         // Don't allow drawing if the UI is open
         if (uiEnabled)
             return;
 
-        Debug.Log("Current state is: " + buttonCurValue);
-        Debug.Log("Last state is: " + buttonlastVal);
+        //Debug.Log("Current state is: " + buttonCurValue);
+        //Debug.Log("Last state is: " + buttonlastVal);
+        
         // If we haven't pushed the trigger last frame, don't connect the meshes from the last point
         if (buttonCurValue == true & buttonlastVal == false)
             penDraw.HandleReleased();
@@ -218,6 +317,11 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
             penDraw.HandleDrawButtonPress(position, colorPicker.TheColor, currentWidth);
     }
 
+    /// <summary>
+    /// Pass the position of the controller to the Line Drawing Manager so the next point sticks to the controller
+    /// until the user clicks the end line button.
+    /// </summary>
+    /// <param name="position"></param>
     public void StickToController(Vector3 position)
     {
         if (uiEnabled)
@@ -227,6 +331,10 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
             lineDraw.StickToController(position);
     }
 
+    /// <summary>
+    /// Select the currently active tool. Passed by index to work with Unity button events in the Editor.
+    /// </summary>
+    /// <param name="index">Enum index. 0 - Line, 1 - Pen, 2 - Eraser.</param>
     public void SetTool(int index)
     {
         drawTool = (DrawTools)index;
@@ -236,60 +344,33 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
             eraser.gameObject.SetActive(false);
     }
 
+    /// <summary>
+    /// Select currently active tool.
+    /// </summary>
+    /// <param name="tool">DrawingManger.DrawTool</param>
+    public void SetTool(DrawTools tool)
+    {
+        drawTool = tool;
+        if (drawTool == DrawTools.Eraser)
+            eraser.gameObject.SetActive(true);
+        else
+            eraser.gameObject.SetActive(false);
+    }
+
+    /// <summary>
+    /// Set current line width.
+    /// </summary>
+    /// <param name="width">Width</param>
     public void SetLineWidth(float width)
     {
         currentWidth = width;
     }
 
-    public void OnPhotonSerializeView(PhotonStream stream, PhotonMessageInfo info)
-    {
-        //Debug.Log("Serializing the drawing manager!");
-        //debugMock.text = "Serializing the drawing manager!";
-        if (stream.IsWriting)
-        {
-            //Debug.Log("Sending data!");
-            //debugMock.text = "SendingData!";
-            stream.SendNext(m_NumberLines);
-            foreach (var line in m_AllLines)
-                stream.SendNext(line);
-            //DebugAllLines();
-        }
-        else
-        {
-            //debugMock.text = "ReceivingData!";
-            //Debug.Log("Receiving data!");
-
-            m_NumberLines = (int)stream.ReceiveNext();
-            //Debug.Log("Count is: " + m_NumberLines);
-            for (int i = 0; i < m_NumberLines; i++)
-            {
-                var line = (Line)stream.ReceiveNext();
-                var id = line.LineID;
-                var match = m_AllLines.Find(x => x.LineID == id);
-                if (match == null)
-                {
-                    DrawDownloadedLine(line);
-                }
-                else
-                {
-                    if (match.Points.Count <= line.Points.Count)
-                        EditLine(line);
-                    else
-                        EraseLine(line);
-                }
-            }
-
-            //debugMock.text = "PlayerID is: " + PlayerID.ToString() + "Writing number of lines: " + m_NumberLines.ToString();
-            //DebugAllLines();
-        }
-    }
-
-    public void AddLineToDebugList(Line line)
-    {
-        debugLines.Add(line);
-    }
-
-    public void DrawDownloadedLine(Line line)
+    /// <summary>
+    /// Draw a line that has been drawn by a remote client.
+    /// </summary>
+    /// <param name="line"></param>
+    public void DrawNetworkLine(Line line)
     {
         if (line.useRenderer > 0)
             lineDraw.AddNetworkLine(line);
@@ -297,7 +378,11 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
             penDraw.AddNetworkLine(line);
     }
 
-    public void EraseLine(Line line)
+    /// <summary>
+    /// Erase a line, or points from a line that has been drawn by a remote client.
+    /// </summary>
+    /// <param name="line"></param>
+    public void EraseNetworkLine(Line line)
     {
         if (line.useRenderer > 0)
             lineDraw.RemoveNetworkLine(line);
@@ -305,11 +390,16 @@ public class DrawingManager : MonoBehaviourPunCallbacks, IPunObservable
             penDraw.EraseNetworkLine(line);
     }
 
-    public void EditLine(Line line)
+    /// <summary>
+    /// Draw more points for a line that has been updated by a remote client.
+    /// </summary>
+    /// <param name="line"></param>
+    public void EditNetworkLine(Line line)
     {
         if (line.useRenderer > 0)
             lineDraw.UpdateNetworkLine(line);
         else
             penDraw.EditNetworkLine(line);
     }
+    #endregion
 }

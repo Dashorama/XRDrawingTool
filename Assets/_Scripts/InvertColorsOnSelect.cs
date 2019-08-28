@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
+/// <summary>
+/// Just a helper class to make UI buttons stay highleted when pressed.
+/// </summary>
 public class InvertColorsOnSelect : MonoBehaviour
 {
     public Image[] buttonImages;
